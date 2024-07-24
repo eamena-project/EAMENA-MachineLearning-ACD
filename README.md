@@ -6,5 +6,5 @@ The tool uses the cloud computing service Google Earth Engine (https://earthengi
 ![EAMENA_MLACD-Framework](https://github.com/AhmedMAMahmoud/EAMENA-MachineLearning-ACD/assets/104382320/0f058ee8-afd8-41af-8d96-5e2bca28aa3a)
 Figure 1. EAMENA MLACD Framework.
 
-![image](https://github.com/AhmedMAMahmoud/EAMENA-MachineLearning-ACD/assets/104382320/f47734ab-3e4c-4596-8710-7bd99cfa0e0c)
+![Figure 2 EAMENA_MLACD_UserInterface](https://github.com/user-attachments/assets/71803ce2-d646-4661-a10d-d8e0eeedcf18)
 Figure 2. EAMENA MLACD User Interface.
