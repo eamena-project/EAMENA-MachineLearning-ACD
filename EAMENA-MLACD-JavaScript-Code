@@ -2,7 +2,7 @@
 
 // This script is developed to distingusih the land cover changes in Bani Walid, Libya and detect threats and changes to archaeological sites.
 // The EAMENA Machine Learning ACD script has been developed by EAMENA Research Associate Dr. Ahmed Mahmoud and has been published as part of the journal article
-// A novel machine learning automated change detection tool for monitoring disturbances and threats to archaeological sites building on the Rayne et al. 2020 Remote Sensing paper
+// A novel machine learning automated change detection tool for monitoring disturbances and threats to archaeological sites. The script was built on the Rayne et al. 2020 Remote Sensing paper
 // (Detecting Change at Archaeological Sites in North Africa Using Open-Source Satellite Imagery) and
 // @Ahmed M A Mahmoud PhD Script for Monitoring Sand Dunes using GEE
 //*****************************************************************************************************************************************************************//
