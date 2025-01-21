@@ -1,1 +1,1005 @@
-The EAMENA MLACD JavaScript code will be made available once the main manuscript article has been published in 2024. 
+// To access the EAMENA MLACD JavaScript code copy the following URL (https://code.earthengine.google.com/d868e6f712a69037db94f9c67a56a4fc), or you can copy the full script below however, this means it will not inlcude the assets for the case study demonstration.
+
+// This script is developed to distingusih the land cover changes in Bani Walid, Libya and detect threats and changes to archaeological sites.
+// The EAMENA Machine Learning ACD script has been developed by EAMENA Research Associate Dr. Ahmed Mahmoud and has been published as part of the journal article
+// A novel machine learning automated change detection tool for monitoring disturbances and threats to archaeological sites building on the Rayne et al. 2020 Remote Sensing paper
+// (Detecting Change at Archaeological Sites in North Africa Using Open-Source Satellite Imagery) and
+// @Ahmed M A Mahmoud PhD Script for Monitoring Sand Dunes using GEE
+//*****************************************************************************************************************************************************************//
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//****************************************************   Section 1 - Defining Variables & Inputs ******************************************************************//
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//Description: Adding Feature Collections, in this stage all the feature classes have to be imported and called into the code editor in preparation for
+// spatial and statistical analysis; image classification, time series analysis
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//******************************************************   Define the study area  *********************************************************************************//
+// Study_Area = Study_Area.geometry();
+Map.centerObject(Study_Area);
+Map.addLayer(Study_Area, {color: 'blue'}, 'Study_Area', false);
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//********************************************  Define or import the Archaeological Sites  *************************************************************************//
+// var Sites = ee.FeatureCollection("projects/ee-eamena-libya/assets/BeniUlid_Sites");
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//*************************************************   Define Training Samples & Classification Variables   **************************************************************************//
+var TS1 = BareSoil; var TS2 = Mountain; var TS3 = Quarry; var TS4 = Urban; var TS5 = Vegetation;
+// Assign each class with a variable that can be used as a representing label in the rest of the script 
+var C1 = 'bareSoil'; var C2 = 'mountain'; var C3 = 'quarry'; var C4 = 'urban'; var C5 = 'vegetation';
+// Merge the training samples into one feature collection
+var sampleDatasetFC = TS1.merge(TS2).merge(TS3).merge(TS4).merge(TS5);
+print(sampleDatasetFC,'sampleDatasetFC');
+// Define the classes array by adding all the classes variables as an element of the classArray
+var classArray = [C1,C2,C3,C4,C5];
+// Define the color palette for each class 
+var classesPalette = ['#ffeec3','#170821', '#c7c6c5', '#cdc2a8', '#118b29'];
+// Define the spectral samples polygons  to understand the responses of each of the classes to different image bands 
+// moreover, to understand how different land cover types interact with the enrgey
+// coming from the sun and how features reflect and absorb light
+var spectralSamples = ee.FeatureCollection([TS1.first(), TS2.first(), TS3.first(), TS4.first(), TS5.first()]);
+Map.addLayer(spectralSamples, {palette: classesPalette},'spectralSamples');
+// print(spectralSamples);
+// Define which bands will be used in the classification process based on
+// the spectral reflectance of each land feature class to limit image missclassification
+var bands = ['B3','B4','B5','B7','B8A','B11','B12','ndvi','ndwi'];
+//Define the series names and values that will be used to plot the histograms chart for sites under threats 
+//******************************************************************************************************************************//
+//***********************************   Section 2 - Adding Image collections and Feature collections ***************************//
+//******************************************************************************************************************************//
+// 2.1 Import Sentinel 2 Multi spectral instrument L2A images 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// cloud mask using Scene Classification Layer (SCL) bit values only the vegetation (4), Bare soils (5),
+// Water (6) and unclassified (7) were ketp the rest were masked out // 
+function s2ClearSky(image) {
+      var scl = image.select('SCL');
+      var clear_sky_pixels = scl.eq(4).or(scl.eq(5)).or(scl.eq(6)).or(scl.eq(7));
+      return image.updateMask(clear_sky_pixels).divide(10000).copyProperties(image, ["system:time_start"])}
+// Define a fucntion to add a NDVI band to the image collection for NDVI time series analysis 
+function addNDVI(image){
+  var ndvi = image.normalizedDifference(['B8', 'B4']).rename('ndvi')
+  return image.addBands([ndvi])
+}
+// Define a fucntion to add a Moisture index band to the image collection for NDMI time series analysis 
+function addNDMI(image){
+  var ndmi = image.normalizedDifference(['B8A', 'B11']).rename('ndmi')
+  return image.addBands([ndmi])
+}
+// Define a fucntion to add a Normalized Difference Water Index (NDWI) band to the image collection for NDMI time series analysis 
+function addNDWI(image){
+  var ndwi = image.normalizedDifference(['B3', 'B8']).rename('ndwi')
+  return image.addBands([ndwi])
+}
+//******************************************************************************************************************************//
+// Define Initial Inputs by the User to Initiate the processing 
+// This snippet of the script allows the user to add their own dates of interest, and AOI geometry or point (P), which will be used to filter out the area for the image collection 
+var startDate = ui.Textbox({
+  placeholder: 'Start: YYYY-MM-DD',
+  onChange: function(value) {
+    startDate.setValue(value);
+    return(value);
+  }
+});
+var endDate = ui.Textbox({
+  placeholder: 'End: YYYY-MM-DD',
+  onChange: function(value) {
+    endDate.setValue(value);
+    return(value);
+  }
+});
+// This function is developed to generate a buffer for each site location by allowing users to define the buffer value in meters
+var featureBuffer = ui.Textbox({
+  placeholder: 'Buffer in meters',
+  onChange: function (value){
+    featureBuffer.setValue(value);
+    return value;
+}});
+// Create a run button to excuate the first stage of the ACD script
+var RunButton = ui.Button({
+    label: 'Run'
+});
+// Create a run button to excuate the second stage of the ACD script
+var RunButton2 = ui.Button({
+    label: 'Run'
+});
+RunButton.onClick(function(){
+  var startDateValue = startDate.getValue();
+  var endDateValue = endDate.getValue();
+  var SenImageCollection = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+                    .filterDate(startDateValue, endDateValue)
+                    .filterBounds(Study_Area)
+                    .filter(ee.Filter.lt('CLOUD_COVERAGE_ASSESSMENT',0.5));
+print('SenImageCollection', SenImageCollection);   
+// print('SenImageCollection', SenImageCollection); 
+var listOfimages = SenImageCollection.toList(SenImageCollection.size());
+// Map.addLayer(ee.Image(listOfimages.get(0)), {bands: ['B8','B3', 'B2'], min: 0, max: 3000}, '0');
+// Get the list of the image acquisition dates
+var Imagedates = SenImageCollection.map(function(image){
+    return ee.Feature(null, {'date': image.date().format('YYYY-MM-dd'), 'id': image.id()});
+})
+.distinct('date')
+.aggregate_array('date');
+// print ('Imagedates', Imagedates);
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Create a mosaic of the images that have been aquired on the same day to have a single image that covers the whole study area
+// Modified after https://gis.stackexchange.com/users/167933/jean
+//https://gis.stackexchange.com/questions/369057/google-earth-engine-roi-area-falling-outside-partial-coverage-by-sentinel-1-tile
+function makeMosaics(image) {
+  var j = ee.Image(image);
+  var date = ee.Date(j.get('system:time_start'));
+  // add only hour to exclude images from other paths
+  var filteredDataset = SenImageCollection.filterDate(date, date.advance(1,'hour'));
+  // add all image properties to the new image
+  var toReturn = ee.Image(filteredDataset.mosaic().copyProperties(image,image.propertyNames()));
+  // add geometries
+  var geometries = filteredDataset.map(function(i){
+    return ee.Feature(i.geometry());
+  });
+  var mergedGeometries = geometries.union();
+  return toReturn.set('system:footprint', mergedGeometries.geometry());
+}
+var mosaiced = SenImageCollection.map(makeMosaics);
+// Select images where the entire study area falls within the footprint of the image
+var mosaicSenImageCollection = mosaiced.filter(ee.Filter.contains('.geo', Study_Area));
+// print('mosaicSenImageCollection size:', mosaicSenImageCollection.size());
+var monthlyImages = mosaicSenImageCollection;
+// print(monthlyImages, 'monthlyImages');
+//Conver the monthly image collection to a list
+var monthlyImagesList = monthlyImages.toList(monthlyImages.size());
+// print (monthlyImagesList);
+// Filter out images (i) with null bands in the image collection. remove monthly images with no data
+// This has been modified after https://gis.stackexchange.com/users/45066/xunilk, based on
+// https://gis.stackexchange.com/questions/387737/filter-null-bands-from-image-collection-in-gee
+var newList = monthlyImagesList.map(function comprobeBandsNumber(i){
+var new_list = ee.List([]); 
+var count = ee.Image(i).bandNames().size();
+var comp = ee.Algorithms.If(count.eq(26), i, 0);
+  new_list = new_list.add(comp);
+  return new_list;
+}).flatten();
+//removing zeroes in new list
+newList = newList.removeAll([0]);
+// print("new list", newList);
+// //convert from list to image collection and Add NDVI, NDMI & NDWI bands to the Image Collection
+var monthlyImagesCol = ee.ImageCollection(newList).map(s2ClearSky)
+.map(addNDVI).map(addNDMI).map(addNDWI).map(function(image){return image.clip(Study_Area)});
+// print (monthlyImagesCol, "maskedmonthlyImagesCollection");
+// Get the date for the monthly images 
+var ImageDates = monthlyImagesCol.map(function(image){
+    return ee.Feature(null, {'date': image.date().format('YYYY-MM-dd'), 'id': image.id()});
+})
+.distinct('date')
+.aggregate_array('date');
+print ('Image Dates', ImageDates);
+// // Add NDVI, NDMI & NDWI bands to the Image Collection
+var monthlyImagesCollection = monthlyImagesCol.map(addNDVI).map(addNDMI).map(addNDWI);
+print("Monthly Image Collection", monthlyImagesCollection);
+// Map.addLayer(ee.Image(newList.get(0)), {bands: ['B8','B3', 'B2'], min: 0, max: 3000}, '0');
+// // Add Digital Elevation Models (DEM)
+// var DEM = ee.Image("USGS/SRTMGL1_003").clip(Study_Area);
+// Map.addLayer(DEM, {min: 0, max: 3000}, 'DEM');
+// var slope = ee.Terrain.slope(DEM);
+// var slopevis = {min: 0, max: 35, palette: ['green', 'yellow', 'red']};
+// Map.addLayer(slope, slopevis, 'slope');
+// var hillshade = ee.Terrain.hillshade(DEM, 270, 45);
+// Map.addLayer(hillshade, null, 'hillshade');
+////////////////////////////////////////////////////////////////////////////////
+// This function is developed to generate a buffer for each site location based on the value imported by the user
+var featureBufferValue = parseFloat(featureBuffer.getValue()); // parseFloat parses a value number defined by the user on the user interface
+function buffer(feature){
+var feature_buffer = feature.buffer(featureBufferValue);
+return feature_buffer;
+}
+var Sites_buffer = Sites.map(buffer);
+// print(Sites, 'Sites');
+// Create an empty image into which to paint the features, cast to byte.
+var empty = ee.Image().byte();
+// Paint all the polygon edges with the same number and width, display.
+var Sites_buffer_polygons = empty.paint({
+  featureCollection: Sites_buffer,
+  color: 1,
+  width: 3
+});
+Map.addLayer(Sites_buffer_polygons, {palette: 'FF0000'}, 'Sites_buffer',false);
+Map.addLayer(Sites, {color: 'blue'}, 'Sites',false);
+// Set and define the classes values 
+// Create an empty array to store the index values for each class from classArray
+var classValues = [];
+// Loop through the input array and add the index values to the new list
+for (var i = 0; i < classArray.length; i++) {
+  classValues.push(i);
+}
+// Print the new list of index values
+// print(classValues);
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Split the Study Area into two boxes extents so to avoid any spatial correlation between 
+// the training and validation samples
+// Get the bounding box (extent) of the FeatureCollection
+var sampleExtent = sampleDatasetFC.geometry(1).bounds(1);
+// Optionally, visualize the bounding box on the map
+Map.addLayer(sampleExtent, {color: 'red'}, 'Bounding Box');
+// print('Sample Extent: ', sampleExtent);  // This should show a valid bounding box
+// Extract the coordinates of the bounding box
+var coords = ee.List(sampleExtent.coordinates().get(0));  // Get the coordinates of the rectangle (bounding box)
+// Extract the minimum and maximum longitude values from the coordinates list
+var lonList = coords.map(function(coord) {
+  return ee.Number(ee.List(coord).get(0)); // Get the longitude (first element)
+});
+// Find the minimum and maximum longitude values
+var xminLon = lonList.reduce(ee.Reducer.min());
+var xmaxLon = lonList.reduce(ee.Reducer.max());
+// Print the extracted longitude values to verify they are Numbers
+// print('xminLon (west boundary longitude): ', xminLon);
+// print('xmaxLon (east boundary longitude): ', xmaxLon);
+// Calculate the midpoint for an East-West split based on longitude
+var midpointLon = ee.Number(xminLon).add(ee.Number(xmaxLon)).divide(2);
+// print('Midpoint Longitude for East-West Split: ', midpointLon);
+// Extract the latitude values (if needed for other purposes)
+var latList = coords.map(function(coord) {
+  return ee.Number(ee.List(coord).get(1)); // Get the latitude (second element)
+});
+// Find the minimum and maximum latitude values
+var yminLat = latList.reduce(ee.Reducer.min());
+var ymaxLat = latList.reduce(ee.Reducer.max());
+// Print the extracted latitude values
+// print('yminLat (south boundary latitude): ', yminLat);
+// print('ymaxLat (north boundary latitude): ', ymaxLat);
+// Create the training and validation regions by splitting the dataset by longitude
+var westRegion = ee.Geometry.Rectangle([xminLon, yminLat, midpointLon, ymaxLat]);  // West (left) part of the dataset
+var eastRegion = ee.Geometry.Rectangle([midpointLon, yminLat, xmaxLon, ymaxLat]);  // East (right) part of the dataset
+// Optionally, visualize the bounding box on the map
+Map.addLayer(eastRegion, {color: 'yellow'}, 'eastRegion Box');
+Map.addLayer(westRegion, {color: 'green'}, 'westRegion Box');
+// print(westRegion,'westRegion');
+// print(eastRegion,'eastRegion');
+// Filter the FeatureCollection into two clusters: west for training, east for validation
+var trainingFC = sampleDatasetFC.filterBounds(eastRegion);  // Use the west cluster for training
+// print(trainingFC,'trainingFC');
+var validationFC = sampleDatasetFC.filterBounds(westRegion); 
+// print(validationFC, 'validationFC');
+// Convert the training and validation FeatureCollections into images for stratified sampling
+var trainingFCImage = ee.Image().byte().paint(trainingFC, 'landcover').rename('landcover');
+var validationFCImage = ee.Image().byte().paint(validationFC, 'landcover').rename('landcover');
+// Perform stratified sampling on the training cluster (West region)
+var training_samples = trainingFCImage.stratifiedSample({
+  numPoints: 2000, // Total sample points for training (70%)
+  classBand: 'landcover',
+  region: eastRegion,  // Sample from the west region
+  scale: 10,
+  classValues: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+  classPoints: [400, 400, 400, 400, 400, 400, 400, 400, 400, 400],
+  dropNulls: true,
+  geometries: true
+});
+print('Training samples: ', training_samples);
+// Collect stratified samples for the validation area (30%)
+var validation_samples = validationFCImage.stratifiedSample({
+  numPoints: 1000, // Total sample points for validation (30%)
+  classBand: 'landcover',
+  region: westRegion,  // Sample from the east region
+  scale: 10,
+  classValues: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+  classPoints: [100, 100, 100, 100, 100, 100, 100, 100, 100, 100],
+  dropNulls: true,
+  geometries: true
+});
+print('Validation samples: ', validation_samples);
+Map.addLayer(training_samples, {color: 'red'}, 'training_samples', false);
+Map.addLayer(validation_samples, {color: 'blue'}, 'validation_samples', false);
+//*********************************************************************************************************//
+// Export Feature Collections
+//*********************************************************************************************************//
+//Export the study area shapefile
+//If you want to export the dataset for each training samples you can change the name of collection instead of BareSoil change it to the new feature collection and then uncomment the lines between 259-264 
+Export.table.toDrive({
+  collection: ee.FeatureCollection(Study_Area),
+  description: 'Study_Area',
+  fileFormat: 'SHP'
+});
+//Export the BaniWalid_Sites shapefile
+Export.table.toDrive({
+  collection: ee.FeatureCollection(Sites),
+  description: 'Sites',
+  fileFormat: 'shp'
+});
+//Export the training samples shapefile
+Export.table.toDrive({
+  collection: ee.FeatureCollection(training_samples),
+  description: 'Training_Samples',
+  fileFormat: 'shp'
+});
+//Export the stratified test samples shapefile
+Export.table.toDrive({
+  collection: ee.FeatureCollection(validation_samples),
+  description: 'validation_samples',
+  fileFormat: 'shp'
+});
+// //Export the bareSoil training dataset shapefile
+// Export.table.toDrive({
+//   collection: ee.FeatureCollection(BareSoil),
+//   description: 'BareSoilDataset',
+//   fileFormat: 'shp'
+// });
+// //Export the mountain training dataset shapefile
+// Export.table.toDrive({
+//   collection: ee.FeatureCollection(Mountain),
+//   description: 'MountainDataset',
+//   fileFormat: 'shp'
+// });
+// // Export the quarry training dataset shapefile
+// Export.table.toDrive({
+//   collection: ee.FeatureCollection(Quarry),
+//   description: 'QuarryDataset',
+//   fileFormat: 'shp'
+// });
+// //Export the urban training dataset shapefile
+// Export.table.toDrive({
+//   collection: ee.FeatureCollection(Urban),
+//   description: 'UrbanDataset',
+//   fileFormat: 'shp'
+// });
+// // Export the vegetation training dataset shapefile
+// Export.table.toDrive({
+//   collection: ee.FeatureCollection(Vegetation),
+//   description: 'VegetationDataset',
+//   fileFormat: 'shp'
+// });
+//************************************************************************************************************************//
+//************************************************************************************************************************//
+// All the variables used in the select widget must be declared first using "var" to be considered as variables
+// Create a drop down menu for the image dates so that the user can select the prior image ID to compare with the post image
+var first_ImageDate, first_ImageDateID, second_ImageDate, second_ImageDateID;
+var first_ImageIDValue = ui.Select({
+  items: ImageDates.getInfo(),
+  placeholder: 'Select First Image',
+  onChange: function selectedfirst_ImageDate() {
+  first_ImageDate = first_ImageIDValue.getValue();
+  first_ImageDateID = ImageDates.indexOf(first_ImageDate);
+  // print(first_ImageDate);
+  // print(first_ImageDateID);
+  },
+  style: {width: '200px'}
+});
+// print (first_ImageIDValue);
+Map.add(first_ImageIDValue);
+// Create a drop down menu for the image dates so that the user can select the post image ID to compare with the prior image
+var second_ImageIDValue = ui.Select({
+  items: ImageDates.getInfo(),
+  placeholder: 'Select Second Image',
+  onChange: function selectedsecond_ImageDate() {
+  second_ImageDate = second_ImageIDValue.getValue();
+  second_ImageDateID = ImageDates.indexOf(second_ImageDate);
+  // print(second_ImageDate);
+  // print(second_ImageDateID);
+  },
+  style: {width: '200px'}
+});
+// print (second_ImageIDValue);
+Map.add(second_ImageIDValue);
+RunButton2.onClick(function(){
+//**********************************************************************************************************************//
+//*************************************** Section 3 - Image Collection Visualization ***********************************//
+//**********************************************************************************************************************//
+// Visualzation of a single image//
+var listOfimages = monthlyImagesCollection.toList(monthlyImagesCollection.size());
+// print(listOfimages, 'listOfimages');
+// This snippt is developed to select the two images using the images dates identifed by the user
+var first_Image = ee.Image(listOfimages.get(first_ImageDateID));
+var second_Image = ee.Image(listOfimages.get(second_ImageDateID));
+// print(first_Image);
+// print(second_Image);
+Map.addLayer(first_Image, {bands: ['B8','B3', 'B2'], min: 0, max: 0.3}, 'First_Image',false);
+Map.addLayer(second_Image, {bands: ['B8', 'B3', 'B2'], min: 0, max: 0.3},'Second_Image',false);
+// // Create RGB visualization images to use as animation frames.
+// // Define GIF visualization parameters.
+var gifParams = {
+  'region': Study_Area,
+  'dimensions': 600,
+  'crs': SenImageCollection.select('B1').first().projection(),
+  'framesPerSecond': 1,
+  // 'min':0,
+  // 'max':30,
+  'maxPixels': 1e200
+};
+var text = require('users/gena/packages:text'); // Import gena's package which allows text overlay on image
+
+var annotations = [
+  {position: 'left', offset: '1%', margin: '1%', property: 'label', scale: 200} //large scale because image if of the whole world. Use smaller scale otherwise
+  ]
+  
+function addText(image){
+  
+  var timeStamp = ee.Date(image.get('system:time_start')).format().slice(0,10); // get the time stamp of each frame. This can be any string. Date, Years, Hours, etc.
+  var timeStamp = ee.String('Date: ').cat(ee.String(timeStamp)); //convert time stamp to string 
+  var image = image.visualize({bands: ['B8', 'B3', 'B2'], min: 0, max: 6.5}).set({'label':timeStamp}); // set a property called label for each image
+  
+  var annotated = text.annotateImage(image, {}, Study_Area, annotations); // create a new image with the label overlayed using gena's package
+
+  return annotated 
+}
+
+var ImageCollectionGif = monthlyImagesCollection.map(addText) //add time stamp to all images
+// print(ImageCollectionGif.getVideoThumbURL(gifParams)); //print gif
+// var filmArgs = {
+//   dimensions: 128,
+//   region: Study_Area,
+//   crs: 'EPSG:3263'
+//   };
+// Print a URL that will produce a filmstrip when accessed.
+// print(ImageCollectionGif.getFilmstripThumbURL(filmArgs));
+//*************************************************************************************************************//
+//**************************** Section 4 - Image Differencing, and Indices NDVI, NDMI, NDWI  ******************//
+//*************************************************************************************************************//
+// Calculate Image Differencing between two dates
+var prior_image = first_Image.select(['B1','B2', 'B3', 'B4','B5','B6','B7','B8', 'B8A','B9','B11','B12']);
+var post_image = second_Image.select(['B1','B2', 'B3', 'B4','B5','B6','B7','B8', 'B8A','B9','B11','B12']);
+var imageDiff = post_image.select(['B8']).subtract(prior_image.select(['B8']));
+// print('imageDiff', imageDiff);
+Map.addLayer(imageDiff, {min: -1, max: 1, palette:['red', 'yellow', 'green']}, 'Image_Difference',false);
+//********************************************************************************************************//
+// Calculate Normalized Difference Indices (NDVI), (NDMI), (NDWI)
+var prior_imageNDVI = ((prior_image.select('B8')).subtract(prior_image.select('B4'))).divide((prior_image.select('B8')).add(prior_image.select('B4')));
+var post_imageNDVI = ((post_image.select('B8')).subtract(post_image.select('B4'))).divide((post_image.select('B8')).add(post_image.select('B4')));
+var NDVI_Palette = ['red', 'yellow', 'green'];
+Map.addLayer(prior_imageNDVI, {min: -1, max: 1, palette: NDVI_Palette}, 'First_imageNDVI',false);
+Map.addLayer(post_imageNDVI, {min: -1, max: 1, palette: NDVI_Palette}, 'Second_imageNDVI',false);
+// Plot NDVI Time series chart for a point of interset 
+var NDVIchart = ui.Chart.image.series({
+  imageCollection: monthlyImagesCollection.select('ndvi'),
+  region: P,
+  reducer: ee.Reducer.mode(),
+  scale:10,
+  }).setOptions({
+    interpolateNulls: true,
+    trendlines: {0: {color: 'CC0000'}},
+    lineWidth: 3,
+    pointSize: 7,
+    series: {0: {titleTextStyle: {fontSize:30, italic: false, bold: true}}, textStyle: {fontSize: 30, bold: true}},
+    title: ' NDVI Time Series at Location (P)', titleTextStyle: {fontSize:35, italic: false, bold: true}, textStyle: {fontSize: 30, bold: true},
+    vAxis: {title: 'NDVI', titleTextStyle: {fontSize:30, italic: false, bold: true}, textStyle: {fontSize: 30, bold: true}},
+    hAxis: {title: 'Date', format: 'YYYY-MMM', titleTextStyle: {fontSize:30, italic: false, bold: true}, gridlines: {count:20, color: 'black'}, textStyle: {fontSize: 30, bold: true}},
+    legend: {textStyle: {fontSize: 30, italic: false, bold: true}}
+  });
+var NDVIbutton = ui.Button('Press to get the NDVI Time Series Chart at Location (P)');
+NDVIbutton.onClick(function(){
+  print(NDVIchart);
+});
+print(NDVIbutton);
+// Plot NDMI Time series chart for a point of interset 
+var NDMIchart = ui.Chart.image.series({
+  imageCollection: monthlyImagesCollection.select('ndmi'),
+  region: P,
+  reducer: ee.Reducer.mode(),
+  scale:10,
+  }).setOptions({
+    interpolateNulls: true,
+    trendlines: {0: {color: 'CC0000'}},
+    lineWidth: 3,
+    pointSize: 7,
+    series: {0: {titleTextStyle: {fontSize:30, italic: false, bold: true}}, textStyle: {fontSize: 30, bold: true}},
+    title: ' NDMI Time Series at Location (P)', titleTextStyle: {fontSize:35, italic: false, bold: true}, textStyle: {fontSize: 30, bold: true},
+    vAxis: {title: 'NDMI', titleTextStyle: {fontSize:30, italic: false, bold: true}, textStyle: {fontSize: 30, bold: true}},
+    hAxis: {title: 'Date', format: 'YYYY-MMM', titleTextStyle: {fontSize:30, italic: false, bold: true}, gridlines: {count:20, color: 'black'}, textStyle: {fontSize: 30, bold: true}},
+    legend: {textStyle: {fontSize: 30, italic: false, bold: true}}  
+  });
+var NDMIbutton = ui.Button('Press to get the NDMI Time Series Chart at Location (P)');
+NDMIbutton.onClick(function(){
+  print(NDMIchart);
+});
+// print(NDMIbutton);
+// Plot NDWI Time series chart for a point of interset 
+var NDWIchart = ui.Chart.image.series({
+  imageCollection: monthlyImagesCollection.select('ndwi'),
+  region: P,
+  reducer: ee.Reducer.mode(),
+  scale:10,
+  }).setOptions({
+    interpolateNulls: true,
+    trendlines: {0: {color: 'CC0000'}},
+    lineWidth: 3,
+    pointSize: 7,
+    series: {0: {titleTextStyle: {fontSize:30, italic: false, bold: true}}, textStyle: {fontSize: 30, bold: true}},
+    title: ' NDWI Time Series at Location (P)', titleTextStyle: {fontSize:35, italic: false, bold: true}, textStyle: {fontSize: 30, bold: true},
+    vAxis: {title: 'NDWI', titleTextStyle: {fontSize:30, italic: false, bold: true}, textStyle: {fontSize: 30, bold: true}},
+    hAxis: {title: 'Date', format: 'YYYY-MMM', titleTextStyle: {fontSize:30, italic: false, bold: true}, gridlines: {count:20, color: 'black'}, textStyle: {fontSize: 30, bold: true}},
+    legend: {textStyle: {fontSize: 30, italic: false, bold: true}}
+  });
+var NDWIbutton = ui.Button('Press to get the NDWI Time Series Chart at Location (P)');
+NDWIbutton.onClick(function(){
+  print(NDWIchart);
+});
+// print(NDWIbutton);
+//*******************************************************************************************************************************//
+//************ Section 5 - Image Classification - Supervised Classification using Machine Learning Models (i.e. Random Forest)***//
+//*******************************************************************************************************************************//
+// Set the colors for the class series to plot the line charts 
+// for each series and class with the color identified in the classes palette
+var classseries = {
+      0: {color: classesPalette[0]}, 1: {color: classesPalette[1]}, 2: {color: classesPalette[2]}, 3: {color: classesPalette[3]},
+      4: {color: classesPalette[4]}, 5: {color: classesPalette[5]}, 6: {color: classesPalette[6]}, 7: {color: classesPalette[7]},
+      8: {color: classesPalette[8]}, 9: {color: classesPalette[9]}
+      };
+// print (classesPalette[0])
+var classificationSpectralChart = ui.Chart.image.regions(
+  prior_image, spectralSamples, ee.Reducer.mean(), 10, 'landcover')
+  .setOptions('ScatterChart')
+  .setOptions({
+    title: 'Surface Spectral Reflectance', titleTextStyle: {fontSize:35, italic: false, bold: true},
+    vAxis: {title: 'Reflectance', titleTextStyle: {fontSize:30, italic: false, bold: true}, textStyle: {fontSize: 20, bold: true}},
+    hAxis: {title: 'Image Band', titleTextStyle: {fontSize:30, italic: false, bold: true}, gridlines: {count:20, color: 'black'}, textStyle: {fontSize: 20, bold: true}},
+    interpolateNulls: true,
+    lineWidth: 5,
+    pointSize: 15,
+    series: classseries,
+    // seriesProperty:classArray
+});
+var classificationSpectralChartButton = ui.Button('Press to get the Classification Spectral Reflectance Chart for the Identified Classification Features');
+  classificationSpectralChartButton.onClick(function(){
+  print(classificationSpectralChart);
+});
+print (classificationSpectralChartButton);
+// Set visualization parameters to display the different classes in the classified image min = 0, max = class value of the last class
+var class_vis = {min:classValues[0], max: classValues[classValues.length -1], palette: classesPalette}; 
+// Train the Random Forest classifier using the training samples to classify the image collection
+function RFclassification(i){
+  var classification_training_samples = i.select(bands).sampleRegions({
+    collection:training_samples,
+    properties: ['landcover'],
+    scale: 10
+});
+var RFtrained_classifier = ee.Classifier.smileRandomForest(10).train(classification_training_samples, 'landcover', bands);
+var RFclassified_image = i.select(bands).classify(RFtrained_classifier)
+.copyProperties(i, ["system:time_start"]);// it adds dates to the classified images
+return RFclassified_image;
+}
+var RFclassified_imageCollection = monthlyImagesCollection.map(RFclassification);
+// print(RFclassified_imageCollection,'RFclassified_imageCollection');
+var RFclassified_imageCollectionlist = RFclassified_imageCollection.toList(RFclassified_imageCollection.size());
+// print(RFclassified_imageCollectionlist, 'RFclassified_imageCollectionlist');
+// Visualize classified Images // 
+var prior_classifiedImage = ee.Image(RFclassified_imageCollectionlist.get(first_ImageDateID));
+var post_classifiedImage = ee.Image(RFclassified_imageCollectionlist.get(second_ImageDateID));
+Map.addLayer(prior_classifiedImage, class_vis, 'First_classifiedImage',false);
+Map.addLayer(post_classifiedImage, class_vis, 'Second_classifiedImage',false);
+//*********************************************************************************************************//
+// Export Classification Maps
+//*********************************************************************************************************//
+Export.image.toDrive({
+  image: ee.Image(RFclassified_imageCollectionlist.get(first_ImageDateID)),
+  description: 'First_classifiedImage',
+  folder: 'GEE_Exports',
+  region: Study_Area,
+  scale: 10,
+  maxPixels: 1e12
+});
+Export.image.toDrive({
+  image: ee.Image(RFclassified_imageCollectionlist.get(second_ImageDateID)),
+  description: 'Second_classifiedImage',
+  folder: 'GEE_Exports',
+  region: Study_Area,
+  scale: 10,
+  maxPixels: 1e12
+});
+//******************************************************************************************************//
+// Defining visualization and generating a legend
+//******************************************************************************************************//
+// Add a legend
+var legendPanel = ui.Panel({
+  style:{
+    Position: 'bottom-right',
+    padding: '5px'
+  }
+});
+var legendtitle = ui.Label({
+  value: 'Classification',
+  style: {
+    fontSize: '14px',
+    fontWeight: 'bold',
+    margin: '0px'
+  }
+});
+legendPanel.add(legendtitle);
+var color = classesPalette;
+var lc_class = classArray;
+var list_legend = function(color, description){
+  var c = ui.Label({
+    style:{
+      backgroundColor: color,
+      padding: '12px',
+      fontWeight: 'bold',
+      margin: '4px'
+    }
+  });
+  var ds = ui.Label({
+    value: description,
+    style:{
+      margin: '4px'
+    }
+  });
+  return ui.Panel({
+    widgets:[c, ds],
+    layout: ui.Panel.Layout.Flow('horizontal')
+  });
+}; 
+var aMax = classValues.length;
+// print(aMax)
+for(var a = 0; a < aMax ; a++){
+  legendPanel.add(list_legend(color[a], lc_class[a]));
+}
+Map.add(legendPanel);
+//************************************************************************************************************//
+//************************** Section 6 - Validation of Classification Results ********************************//
+// Validation for the prior classified image
+var PriorRFvalidation_test_samples = prior_classifiedImage.sampleRegions({collection: validation_samples,  properties: ['landcover'],  scale: 10});
+// print('Prior RF valdiation dataset', PriorRFvalidation_test_samples);
+var PriorRFtestaccuracy = PriorRFvalidation_test_samples.errorMatrix('landcover','classification');
+print('First Image Validation Error Matrix:', PriorRFtestaccuracy);
+print('First Image Validation Overall Accuracy:', PriorRFtestaccuracy.accuracy());
+var PriorProducerAccuracy = PriorRFtestaccuracy.producersAccuracy();
+print('First Image Producer Accuracy:',PriorProducerAccuracy);
+var PriorConsumerAccuracy = PriorRFtestaccuracy.consumersAccuracy();
+// var PriorConsumerAccuracy = ee.Array(PriorConsumerAccuracy.values());
+print('First Image Consumer Accuracy:', PriorConsumerAccuracy);
+// // Calculate precision, recall, and F-score
+var FirstClassifiedImagefScore = PriorRFtestaccuracy.fscore();
+// Print the results
+print('Confusion Matrix:', PriorRFtestaccuracy);
+print('F-score:', FirstClassifiedImagefScore);
+// Validation for the post classified image
+var PostRFvalidation_test_samples = post_classifiedImage.sampleRegions({collection: validation_samples,  properties: ['landcover'],  scale: 10});
+var PostRFtestaccuracy = PostRFvalidation_test_samples.errorMatrix('landcover','classification');
+print('Second Image Validation Error Matrix:', PostRFtestaccuracy);
+print('Second Image Validation Overall Accuracy:', PostRFtestaccuracy.accuracy());
+var PostProducerAccuracy = PostRFtestaccuracy.producersAccuracy();
+print('Second Image Producer Accuracy:',PostProducerAccuracy);
+var PostConsumerAccuracy = PostRFtestaccuracy.consumersAccuracy();
+// var PostConsumerAccuracy = ee.Array(PostConsumerAccuracy.values());
+print('Second Image Consumer Accuracy:', PostConsumerAccuracy);
+// // Calculate precision, recall, and F-score
+var SecondClassifiedImagefScore = PostRFtestaccuracy.fscore();
+// Print the results
+print('Confusion Matrix:', PostRFtestaccuracy);
+print('SecondClassifiedImageF-Score:', SecondClassifiedImagefScore);
+//*******************************************************************************************************************************//
+//******************************** Section 7 - Detect the Changes between  Classified Images***************************************//
+//*******************************************************************************************************************************//
+// Calculate the area for each land cover class from all classification images
+// Plot a chart to show the time series for area changes in each class
+// This snippet of the script (how-to-automate-calculating-area) has been modified after (Daniel Wiell, 2020)
+// https://gis.stackexchange.com/users/154371/daniel-wiell?tab=profile
+// https://code.earthengine.google.com/d20512d31f5d46d5d9302000ce86bc28
+// https://gis.stackexchange.com/questions/361464/google-earth-engine-how-to-automate-calculating-area-for-each-class-for-each-im/361486#361486
+function areaByClass(image) {  
+  var classNames = ee.List(classArray);
+  var groups = ee.Image.pixelArea().addBands(image)
+    .reduceRegion({ 
+      reducer: ee.Reducer.sum().group({ 
+        groupField: 1, groupName: 'class'}), 
+      geometry: Study_Area, 
+      scale: 100,
+      bestEffort: true}).get('groups');
+  var areaByClass = ee.Dictionary(
+    ee.List(groups).map(function (AreaDic) {
+    var AreaDic = ee.Dictionary(AreaDic)
+      return [
+        classNames.get(AreaDic.getNumber('class')),
+        AreaDic.getNumber('sum').divide(1e6) // square km 
+      ];
+      }).flatten());
+    return ee.Feature(null, areaByClass).copyProperties(image, ["system:time_start"]);
+  }
+var RFClassareas = RFclassified_imageCollectionlist.map(areaByClass);
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// print('RFClassareas', RFClassareas);
+var AreaClassChart = ui.Chart.feature.byFeature({
+  features: RFClassareas,
+  xProperty:'system:time_start'
+  })
+  .setChartType('LineChart')
+  .setOptions(({
+    interpolateNulls: true,
+    lineWidth: 5,
+    pointSize: 15,
+    title: 'Land Cover Classification Areal Time Series',titleTextStyle: {fontSize:35, italic: false, bold: true},
+    hAxis: {
+      title: 'Date', format: 'YYYY-MMM', titleTextStyle: {italic: false, bold: true, fontSize:30}, gridlines: {count:20, color: 'black'},textStyle: {fontSize: 30, bold: true}},
+    vAxis: {
+      title: 'Area of Classification (sq km)', titleTextStyle: {italic: false, bold: true, fontSize:30},textStyle: {fontSize: 30, bold: true}},
+    colors:color,
+    legend: {textStyle: {fontSize: 30, bold: true}}
+    }));
+// Export.table.toDrive({
+//   collection: RFClassareas,
+//   description: 'RFClassareas',
+//   fileFormat: 'CSV'
+// });
+// print(AreaClassbutton);
+// print(AreaClassChart);
+var AreaClasschartbutton = ui.Button('Press to get the Land Cover Classification Areal Time Series');
+AreaClasschartbutton.onClick(function(){
+  print(AreaClassChart);
+});
+print(AreaClasschartbutton);
+// Classification Differencing //neq divide pixels in the image with change (1) and no change (0)
+var Img_classification_diff = prior_classifiedImage.subtract(post_classifiedImage).neq(0);
+// print(Img_classification_diff,'Img_classification_diff');
+Map.addLayer(Img_classification_diff, {min:0, max: 1, palette:['black', 'red']}, 'Binary Change',false);
+// Create RGB visualization classification images to use as animation frames
+// Define the Classification GIF visualization parameters.
+var ClassificationGifParams = {
+  'region': Study_Area,
+  'dimensions': 600,
+  'crs': SenImageCollection.select('B1').first().projection(),
+  'framesPerSecond': 1,
+  'maxPixels': 1e200
+};
+var text = require('users/gena/packages:text'); // Import gena's package which allows text overlay on image
+var annotations = [
+  {position: 'left', offset: '1%', margin: '1%', property: 'label', scale: 100} //large scale because image if of the whole world. Use smaller scale otherwise
+  ]
+function addText(RFclassified_image){
+  var timeStamp = ee.Date(RFclassified_image.get('system:time_start')).format().slice(0,10); // get the time stamp of each frame. This can be any string. Date, Years, Hours, etc.
+  var stringtimeStamp = ee.String('Date: ').cat(ee.String(timeStamp)); //convert time stamp to string 
+  var RFclassified_image = RFclassified_image.visualize(class_vis).set({'label':stringtimeStamp}); // set a property called label for each image
+  var annotated = text.annotateImage(RFclassified_image, {}, Study_Area, annotations); // create a new RFclassified_image with the label overlayed using gena's package
+  return annotated; 
+}
+var classificationGif = RFclassified_imageCollection.map(addText); //add time stamp to all images
+// Print the GIF URL to the console.
+// print(classificationGif.getVideoThumbURL(ClassificationGifParams)); //print gif
+// // Print a URL that will produce a filmstrip when accessed.
+// print(classificationGif.getFilmstripThumbURL(filmArgs));
+// // Define arguments for the getFilmstripThumbURL function parameters.
+// var filmArgs = {
+//   dimensions: 128,
+//   region: Study_Area,
+//   crs: 'EPSG:32630',
+//   'maxPixels': 1e12
+//   };
+// // Print a URL that will produce the filmstrip when accessed.
+// print(classificationGif.getFilmstripThumbURL(filmArgs));
+// Add ACD-EAMENA in the GIF maps created so that if any one use it will have to autmaotically accredit the EAMENA work
+//********************************************************************************************************************//
+//********************************  Section 8 -  Change detection classification analysis  ***************************//
+//********************************************************************************************************************// 
+// Define the series names and values that will be used to plot the change detection time series charts
+// Create an empty array to store the series names and values
+var timeSeriesTicks = [];
+// Create a for loop to generate the timeSeriesTicks array from the classArray
+for (var i = 0; i < classArray.length; i++){
+  var tick = {
+  v:i, // v is the class value
+  f:classArray[i] // f is the property class name
+  };
+  timeSeriesTicks.push(tick);
+}
+print(timeSeriesTicks);
+// Extract classification values to site location in order to detect the changes in land cover classes over time
+// Plot classification Time series chart for a feature of interset 
+var ClassificationTimeSerieschart = ui.Chart.image.series({
+  imageCollection: RFclassified_imageCollection,
+  region: P,
+  reducer: ee.Reducer.mode(),
+  xProperty:'system:time_start',
+  scale:10
+  }).setSeriesNames(['class'])
+  .setOptions({
+    interpolateNulls: true,
+    lineWidth: 5,
+    pointSize: 15,
+    title: ' Classification Time Series at Location (P)', titleTextStyle: {fontSize:35, italic: false, bold: true},
+    hAxis: {title: 'Date', format: 'YYYY-MMM', titleTextStyle: {fontSize:30, italic: false, bold: true}, gridlines: {count:20, color: 'black'}, textStyle: {fontSize: 30, bold: true}},
+    vAxis: {title: 'Class', titleTextStyle: {fontSize:30, italic: false, bold: true}, 
+    textStyle: {fontSize: 30, bold: true},viewWindow:{min:0, max:5},
+    ticks: timeSeriesTicks},
+    // ticks values can be adjusted to the classes values which can change from a study area to another, v&f are function used to define the class value and class type, v defines the class value and t defines the class type
+    legend: {textStyle: {fontSize: 30, bold: true}}, 
+    });
+// print(ClassificationTimeSerieschart);
+// Display the classification time series chart for a feature of interset 
+var ClassificationTimeSerieschartButton = ui.Button('Press to get the Classification Time Series Chart for the Feature of Interest');
+  ClassificationTimeSerieschartButton.onClick(function(){
+  print(ClassificationTimeSerieschart);
+});
+print(ClassificationTimeSerieschartButton);
+// This code snippet for detecting the changes between two classification images has been modified after a script written by Daniel Wiell
+// https://gis.stackexchange.com/questions/359099/how-to-perform-change-detection-using-classified-land-cover-map-in-google-earth
+//********************************************************************************************************************//
+var changes = ee.ImageCollection(ee.List(
+  classValues.map(function (from, i) {
+    return classValues.map(function (to,  j) {
+      var changeValue = classValues.length * i + j + 1;
+      return prior_classifiedImage.eq(from)
+      .and(post_classifiedImage.eq(to))
+      .multiply(changeValue)
+      .int();
+    });
+  })
+).flatten()).reduce(ee.Reducer.sum());
+//*******************************************************************************************************************//
+Map.addLayer(ee.Image(changes), {min:1, max: 50, palette:['#d63e07', '#d6d607', '#07d690', '#07bcd6', '#0971d6','#a006d6','#d60786',
+'#d6931e','#c6d628','#27d652','#3aa6d6','#983ad6','#d6437b','#802e51','#d68c64','#767b41','#418f9a', '#773788', '#6d3a4e', '#fcad90','#a1ff80','#826751',
+'#c0ffaa','#d6c7b9','#a6c7a5', '#d63e01', '#d6d602', '#07d694', '#07bcd5', '#0971d5','#a006d4','#d60782',
+'#d6931d','#c6d625','#27d654','#3aa6d7','#983ad3','#d64c22','#802e58','#d68c69','#767b46','#418f9c', '#773789', '#6d3a4f', '#fcad97','#a1ff85','#826753',
+'#c0ffab','#d6c7b8','#a6c7a4']},'ClassificationChanges',false);
+// print(changes, 'ClassificationChanges');
+// Mask out or select only areas with the specific id change class/threat
+// Urbanization in Bani Walid 
+var bare_To_urban = changes.updateMask(changes.eq(4));
+// var mountain_To_urban = changes.updateMask(changes.eq(9));
+// var quarry_To_urban = changes.updateMask(changes.eq(14));
+var remainedurban = changes.updateMask(changes.eq(19));
+// var vegetation_To_urban = changes.updateMask(changes.eq(24));
+Map.addLayer(bare_To_urban,{palette:['blue']}, 'bare_To_urban',false);
+// Map.addLayer(mountain_To_urban, {palette:['#170821']}, 'mountain_To_urban', false);
+// Map.addLayer(quarry_To_urban, {palette:['white']}, 'quarry_To_urban', false);
+// Map.addLayer(remainedurban,{palette:['red']}, 'remainedurban',false);
+// Map.addLayer(vegetation_To_urban,{palette:['green']}, 'vegetation_To_urban',false);
+// print (remainedvegetation, 'remainedvegetation');
+//*********************************************************************************************************//
+// Export classification change rasters for areas under specified threat
+//*********************************************************************************************************//
+Export.image.toDrive({
+  image: changes.int(),
+  description: 'classification_changes',
+  folder: 'GEE_Exports',
+  region: Study_Area,
+  scale: 10,
+  maxPixels: 1e12
+});
+// Export.image.toDrive({
+//   image: remainedurban.int(),
+//   description: 'classification_remainedurban',
+//   folder: 'GEE_Exports',
+//   region: Study_Area,
+//   scale: 10,
+//   maxPixels: 1e12
+// });
+// Export.image.toDrive({
+//   image: bare_To_urban.int(),
+//   description: 'classification_bare_To_urban',
+//   folder: 'GEE_Exports',
+//   region: Study_Area,
+//   scale: 10,
+//   maxPixels: 1e12
+// });
+//***********************************************************************************************************************************************************************//
+//********** Section 9 - Compute the statistics of the classification changes results; mainly the most common value of changes within the buffer extent for each site
+//********** and the frequancy weight for each class change in the area of site of interest *****************************************************************************//
+//***********************************************************************************************************************************************************************//
+var changesPerSite = changes.reduceRegions({
+    collection: Sites_buffer,
+    reducer: (ee.Reducer.mode({maxRaw:9999})
+    .combine({
+    reducer2: ee.Reducer.toList(),
+    sharedInputs: true})
+    .combine({
+    reducer2: ee.Reducer.frequencyHistogram(),
+  sharedInputs: true
+})),
+    scale: 10,
+});
+print(changesPerSite, 'changesPerSite');
+// Specify the class value to select sites with a particular threat or change 
+var Sites_underThreat_ofClass = changesPerSite.filter(ee.Filter.listContains('list', 4));
+print (Sites_underThreat_ofClass, 'Sites_underThreat_ofClass');
+// To add a feature polygon displayed with a hollow polygon, the footprint of each polygon is converted to an image
+// this step is not necessary, it is only needed for visualization 
+var Sites_underThreat = empty.paint({
+  featureCollection: Sites_underThreat_ofClass,
+  color: 1,
+  width: 3
+});
+Map.addLayer(Sites_underThreat, {color: 'black'},'Sites_under_Threat_of_Class_Change',false);
+//*********************************************************************************************************//
+// Export Feature Collections for sites under change and threat
+//*********************************************************************************************************//
+//Export the changesPerSite shapefile
+Export.table.toDrive({
+  collection: changesPerSite,
+  description: 'changesPerSite',
+  fileFormat: 'SHP'
+});
+//Export the Sites_underThreat_ofClass shapefile
+Export.table.toDrive({
+  collection: ee.FeatureCollection(Sites_underThreat_ofClass),
+  description: 'Sites_underThreat_ofClass',
+  fileFormat: 'SHP'
+});
+// Plot the classification change mode results for all of the sites in the study area
+// Define the chart and print it to the console.
+var changeticks = [];
+for (var i = 0; i < classArray.length; i++) {
+    for (var j = 0; j < classArray.length; j++) {
+        var tickValue = i * classArray.length + j + 1;
+        var tickLabel = classArray[i] + '_To_' + classArray[j];
+        changeticks.push({ v: tickValue, f: tickLabel });
+    }
+}
+// Print the generated ticks
+console.log(changeticks);
+var changesPerSitechart = ui.Chart.feature.histogram(changesPerSite, 'mode')
+                  .setOptions({
+                  title: 'Sites under Different Threats and Land Cover Changes', titleTextStyle: {fontSize:35, italic: false, bold: true},
+                  colors: ['1d6b99', 'cf513e'],
+                  pointSize: 7,
+                  dataOpacity: 0.4,
+                  hAxis: {'title': 'Threat and Land Cover Change',titleTextStyle: {fontSize: 30, italic: false, bold: true},slantedTextAngle:90,
+                  ticks: changeticks,
+                  textStyle: {fontSize: 30, bold: true}},
+                  vAxis: {'title': 'Number of Sites',titleTextStyle: {fontSize: 30, italic: false, bold: true}, textStyle: {fontSize: 30, bold: true}},
+                  legend:{titleTextStyle: {fontSize: 30, italic: false, bold: true}},
+            });
+print(changesPerSitechart);
+});// This is for the end of Stage 2, i.e. RunButton2 
+});// This is for the end of Stage 1, i.e. RunButton1 
+// //*******************************************************************************************************************************//
+// //**************************************** Section 10 - ACD User Interface ******************************************************//
+// // In this section we create a graphical user interface that will allow users to easily interact with the EAMENA MLACD
+// // by using panels and layouts to hold the widgets used to display the elements and results generated from the EAMENA MLACD script
+// //******************************************************************************************************************************//
+//*************************** Define all elements and widgets used to display the ACD results on the user interface panel *********//
+// Create a panel with vertical flow layout
+var UserInterfacepanel = ui.Panel({
+  layout: ui.Panel.Layout.flow('vertical'),
+  style: {width: '28%'}
+});
+// Create a title label for the ACD web User Interface 
+var UserInterfacetitle = ui.Label({value:'Monitoring Archaeological Sites using EAMENA MLACD',
+   style: {fontSize: 30, fontWeight: 'bold', position: 'top-left'}});
+// Create a button to reset everything
+var ResetButton = ui.Button({
+  label: 'Reset',
+}); 
+// Description of the EAMENA ACD 
+var EAMENA_ACD_Description = ui.Label({value:'The automated change detection (ACD) system uses free satellite imagery and high-performance computing power available via Google Earth Engine to compare a series of Sentinel-2 images to highlight areas of change and identify where, when, and what types of changes have occurred within the vicinity of known archaeological sites.',
+   style: {fontSize: 40, fontWeight: 'bold'}});
+// Create a user interface widget to allow users to import dates of interest
+var Dateslabel = ui.Label({value:'Define the start and end dates of the study period',
+    style:{fontSize: 40, fontWeight: 'bold'}});
+var startDatelabel = ui.Label({value:'Define the start date in the following format: e.g. 2020-01-21.',
+    style:{fontSize: 30, fontWeight: 'bold'}});
+var endDatelabel = ui.Label({value:'Define the end date in the following format: e.g. 2023-12-31.',
+    style:{fontSize: 30, fontWeight: 'bold'}});    
+var featureBufferlabel = ui.Label({value:'Define the feature buffer distance in meters, e.g. 50m. Note that the buffer function will not accept a null distance; 0 meter in that case you must specify a small decimal fraction number e.g. 0.1m.',
+    style:{fontSize: 30, fontWeight: 'bold'}}); 
+var FirstRunButtonLabel =  ui.Label({value:'Press the "Run" button to excecute the first stage of the processing.',
+    style:{fontSize: 30, fontWeight: 'bold'}});
+var SecondRunButtonLabel =  ui.Label({value:'Press the second "Run" button to excecute the second and third stages of the processing.',
+    style:{fontSize: 30, fontWeight: 'bold'}});
+var ImageDateslabel = ui.Label({value:'Choose your Image Dates',
+    style:{fontSize: 40, fontWeight: 'bold'}});
+var first_ImageIDlabel = ui.Label({value:'*from the drop down menu select the First Image Date*',
+    style:{fontSize: 30, fontWeight: 'bold'}}); 
+var second_ImageIDlabel = ui.Label({value:'*from the drop down menu select the Second Image Date*',
+    style:{fontSize: 30, fontWeight: 'bold'}});
+// Reset the map panel to allow for new diplay for the new results
+ResetButton.onClick(function() {
+    startDate.setValue('');
+    endDate.setValue('');
+    featureBuffer.setValue('');
+    Map.clear();
+    Map.drawingTools().clear();
+});
+//***************************************  Display the User Interface Panel ***************************************************************//
+UserInterfacepanel.add(UserInterfacetitle) // add a user interface title to the user interface panel
+      // .add(EAMENA_Logolabel)
+      .add(EAMENA_ACD_Description)
+      .add(Dateslabel)
+      .add(startDatelabel)
+      .add(startDate)
+      .add(endDatelabel)
+      .add(endDate)
+      .add(featureBufferlabel)
+      .add(featureBuffer)
+      .add(FirstRunButtonLabel)
+      .add(RunButton)
+      .add(ImageDateslabel)
+      .add(first_ImageIDlabel)
+      .add(second_ImageIDlabel)
+      .add(SecondRunButtonLabel)
+      .add(RunButton2)
+      // .add(AreaClassbutton) // add the Area class widget to the user interface panel
+      // .add(PointClassbutton) // add a widget to show the point class time series on the user interface panel 
+      // .add(chart)// add the change per site chart to the user interface panel 
+      .add(ResetButton);
+// // Add the panel to the user interface root
+ui.root.insert(0, UserInterfacepanel); 
+//*****************************************************************************************************************************************//
