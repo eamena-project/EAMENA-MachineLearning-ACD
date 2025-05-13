@@ -1,5 +1,5 @@
 # EAMENA-MachineLearning-ACD
-The EAMENA Machine Learning Automated Change Detection tool (EAMENA MLACD) is a novel geospatial tool developed by EAMENA researcher Dr Ahmed Mahmoud that allows heritage professionals and researchers to rapidly identify and monitor changes and threats to archaeological sites.
+The EAMENA Machine Learning Automated Change Detection tool (EAMENA MLACD) is a novel geospatial tool developed by EAMENA researcher Dr Ahmed Mahmoud that allows heritage professionals and researchers to rapidly identify and monitor changes and threats to archaeological sites. A full technical description of the tool and the outputs it produces can be found in Mahmoud et al. 2024 (https://doi.org/10.1016/j.rsase.2024.101396). 
 
 The tool uses the cloud computing service Google Earth Engine (https://earthengine.google.com/). It was developed using JavaScript and machine learning algorithms (i.e. Random Forest) to produce a time-series of Sentinel-2 images classified by land cover for a user-defined location and time-period, and compares them to determine threats and changes in land cover and use at and around a defined dataset of heritage sites. (Figure 1).
 
