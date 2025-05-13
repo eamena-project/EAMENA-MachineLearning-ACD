@@ -13,6 +13,7 @@ Figure 2. EAMENA MLACD User Interface.
 
 The land cover classification capabilities of the EAMENA MLACD mean that it could also be adapted for further applications in the Earth Observation and Environmental fields such as time series analysis for deforestation, wildfire and flood impact analysis.
 
-Citation:
+**Citation:**
+
 If you use this repository or any part of its contents in your work, please cite the following article:
 Mahmoud, A.M.A, Sheldrick, N., & Ahmed, M. (2024). A Novel Machine Learning Automated Change 	Detection Tool for Monitoring Disturbances and Threats to Archaeological Sites. Remote	 	Sensing Applications: Society and Environment 37. doi: 10.1016/j.rsase.2024.101396.
