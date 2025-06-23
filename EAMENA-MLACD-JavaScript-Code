@@ -1,4 +1,4 @@
-// To access the EAMENA MLACD JavaScript code copy the following URL (https://code.earthengine.google.com/cd1c5a32fc9476f64421d284b8e7cae1), or you can copy the full script below however, this means it will not inlcude the assets for the case study demonstration.
+// To access the EAMENA MLACD JavaScript code copy the following URL (https://code.earthengine.google.com/2729b95df2867e0d2568a8d0e5cbfe22), or you can copy the full script below however, this means it will not inlcude the assets for the case study demonstration.
 
 // This script is developed to distingusih the land cover changes in Bani Walid, Libya and detect threats and changes to archaeological sites.
 // This EAMENA Machine Learning ACD script has been developed by EAMENA Research Associate Dr. Ahmed Mahmoud based on the Rayne et al. 2020 Remote Sensing paper
@@ -30,9 +30,6 @@ var trainingSets = [TS1, TS2, TS3, TS4, TS5];
 var classArray = [C1,C2,C3,C4,C5];
 // Define the colour palette for each class 
 var classesPalette = ['#ffeec3','#170821', '#c7c6c5', '#cdc2a8', '#118b29'];
-// Define which bands will be used in the classification process based on
-// the spectral reflectance of each land feature class to reduce image missclassification
-var bands = ['B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B11','B12','ndvi','ndwi'];
 //******************************************************************************************************************************//
 //***********************************   Section 2 - Adding Image collections and Feature collections ***************************//
 //******************************************************************************************************************************//
@@ -91,6 +88,7 @@ var RunButton = ui.Button({
 var RunButton2 = ui.Button({
     label: 'Run'
 });
+/****************************************************************************************************************/
 // Set and define the classes values 
 // Create an empty array to store the index values for each class from classArray
 var classValues = [];
@@ -172,19 +170,19 @@ function makeMosaics(image) {
   var mergedGeometries = geometries.union();
   return toReturn.set('system:footprint', mergedGeometries.geometry());
 }
-var mosaiced = SenImageCollection.map(makeMosaics);
+var mosaicedImages = SenImageCollection.map(makeMosaics);
 // Select images where the entire study area falls within the footprint of the image
-var mosaicSenImageCollection = mosaiced.filter(ee.Filter.contains('.geo', Study_Area));
-// print('mosaicSenImageCollection size:', mosaicSenImageCollection.size());
-var monthlyImages = mosaicSenImageCollection;
-// print(monthlyImages, 'monthlyImages');
-//Conver the monthly image collection to a list
-var monthlyImagesList = monthlyImages.toList(monthlyImages.size());
-// print (monthlyImagesList);
-// Filter out images (i) with null bands in the image collection. remove monthly images with no data
+var filteredmosaicedCollection = mosaicedImages.filter(ee.Filter.contains('.geo', Study_Area));
+// print('filteredmosaicedCollection size:', filteredmosaicedCollection.size());
+var filteredmosaicedImages = filteredmosaicedCollection;
+// print(filteredmosaicedImages, 'filteredmosaicedImages');
+//Convert the filtered mosaiced Image collection to a list
+var filteredmosaicedImagesList = filteredmosaicedImages.toList(filteredmosaicedImages.size());
+// print (filteredmosaicedImagesList);
+// Filter out images (i) with null bands in the image collection. remove images with no data
 // This has been modified after https://gis.stackexchange.com/users/45066/xunilk, based on
 // https://gis.stackexchange.com/questions/387737/filter-null-bands-from-image-collection-in-gee
-var newList = monthlyImagesList.map(function comprobeBandsNumber(i){
+var newList = filteredmosaicedImagesList.map(function comprobeBandsNumber(i){
 var new_list = ee.List([]); 
 var count = ee.Image(i).bandNames().size();
 var comp = ee.Algorithms.If(count.eq(26), i, 0);
@@ -195,19 +193,19 @@ var comp = ee.Algorithms.If(count.eq(26), i, 0);
 newList = newList.removeAll([0]);
 // print("new list", newList);
 // //convert from list to image collection and Add NDVI, NDMI & NDWI bands to the Image Collection
-var monthlyImagesCol = ee.ImageCollection(newList).map(s2ClearSky)
+var mosaicedImageCollection = ee.ImageCollection(newList).map(s2ClearSky)
 .map(addNDVI).map(addNDMI).map(addNDWI).map(function(image){return image.clip(Study_Area)});
-// print (monthlyImagesCol, "maskedmonthlyImagesCollection");
+// print (mosaicedImageCollection, "maskedmosaicedImageCollection");
 // Get the date for the monthly images 
-var ImageDates = monthlyImagesCol.map(function(image){
+var ImageDates = mosaicedImageCollection.map(function(image){
     return ee.Feature(null, {'date': image.date().format('YYYY-MM-dd'), 'id': image.id()});
 })
 .distinct('date')
 .aggregate_array('date');
 print ('Image Dates', ImageDates);
 // // Add NDVI, NDMI & NDWI bands to the Image Collection
-var monthlyImagesCollection = monthlyImagesCol.map(addNDVI).map(addNDMI).map(addNDWI);
-print("Image Collection", monthlyImagesCollection);
+var s2FilteredCollection = mosaicedImageCollection.map(addNDVI).map(addNDMI).map(addNDWI);
+print("Sentinel-2 Filtered Image Collection", s2FilteredCollection);
 //************************************************************************************************************************//
 // This function is developed to generate a buffer for each site location based on the value imported by the user
 var featureBufferValue = parseFloat(featureBuffer.getValue()); // parseFloat parses a value number defined by the user on the user interface
@@ -231,78 +229,25 @@ Map.addLayer(Sites, {color: 'blue'}, 'Sites',false);
 // Merge the training samples into one feature collection
 var sampleDatasetFC = ee.FeatureCollection(trainingSets).flatten();
 // print('sampleDatasetFC', sampleDatasetFC);
-// Split the Study Area into two boxes extents so to avoid any spatial correlation between 
-// the training and validation samples
-// Get the bounding box (extent) of the FeatureCollection
-var sampleExtent = sampleDatasetFC.geometry(1).bounds(1);
-// Optionally, visualize the bounding box on the map
-// Map.addLayer(sampleExtent, {color: 'red'}, 'Bounding Box');
-// print('Sample Extent: ', sampleExtent);  // This should show a valid bounding box
-// Extract the coordinates of the bounding box
-var coords = ee.List(sampleExtent.coordinates().get(0));  // Get the coordinates of the rectangle (bounding box)
-// Extract the minimum and maximum longitude values from the coordinates list
-var lonList = coords.map(function(coord) {
-  return ee.Number(ee.List(coord).get(0)); // Get the longitude (first element)
-});
-// Find the minimum and maximum longitude values
-var xminLon = lonList.reduce(ee.Reducer.min());
-var xmaxLon = lonList.reduce(ee.Reducer.max());
-// Print the extracted longitude values to verify they are Numbers
-// print('xminLon (west boundary longitude): ', xminLon);
-// print('xmaxLon (east boundary longitude): ', xmaxLon);
-// Calculate the midpoint for an East-West split based on longitude
-var midpointLon = ee.Number(xminLon).add(ee.Number(xmaxLon)).divide(2);
-// print('Midpoint Longitude for East-West Split: ', midpointLon);
-// Extract the latitude values (if needed for other purposes)
-var latList = coords.map(function(coord) {
-  return ee.Number(ee.List(coord).get(1)); // Get the latitude (second element)
-});
-// Find the minimum and maximum latitude values
-var yminLat = latList.reduce(ee.Reducer.min());
-var ymaxLat = latList.reduce(ee.Reducer.max());
-// Print the extracted latitude values
-// print('yminLat (south boundary latitude): ', yminLat);
-// print('ymaxLat (north boundary latitude): ', ymaxLat);
-// Create the training and validation regions by splitting the dataset by longitude
-var westRegion = ee.Geometry.Rectangle([xminLon, yminLat, midpointLon, ymaxLat]);  // West (left) part of the dataset
-var eastRegion = ee.Geometry.Rectangle([midpointLon, yminLat, xmaxLon, ymaxLat]);  // East (right) part of the dataset
-// Optionally, visualize the bounding box on the map
-// Map.addLayer(eastRegion, {color: 'yellow'}, 'eastRegion Box');
-// Map.addLayer(westRegion, {color: 'green'}, 'westRegion Box');
-// print(westRegion,'westRegion');
-// print(eastRegion,'eastRegion');
-// Filter the FeatureCollection into two clusters: west for training, east for validation
-var trainingFC = sampleDatasetFC.filterBounds(eastRegion);  // Use the west cluster for training
-// print(trainingFC,'trainingFC');
-var validationFC = sampleDatasetFC.filterBounds(westRegion); 
-// print(validationFC, 'validationFC');
-// Convert the training and validation FeatureCollections into images for stratified sampling
-var trainingFCImage = ee.Image().byte().paint(trainingFC, 'landcover').rename('landcover');
-var validationFCImage = ee.Image().byte().paint(validationFC, 'landcover').rename('landcover');
-// Perform stratified sampling on the training cluster (West region)
-var training_samples = trainingFCImage.stratifiedSample({
-  numPoints: 2000, // Total sample points for training (70%)
+// Convert the training samples feature collection into an image 
+var sampleDatasetFCImage = ee.Image().byte().paint(sampleDatasetFC, 'landcover').rename('landcover');
+// Collect 100 training samples for each class using the stratified sample function 
+var StratifiedSampleDataset = sampleDatasetFCImage.stratifiedSample({
+  numPoints: 1000,
   classBand: 'landcover',
-  region: eastRegion,  // Sample from the west region
+  region: Study_Area,
   scale: 10,
-  classValues: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-  classPoints: [400, 400, 400, 400, 400, 400, 400, 400, 400, 400],
-  dropNulls: true,
-  geometries: true
-});
-print('Training samples: ', training_samples);
-// Collect stratified samples for the validation area (30%)
-var validation_samples = validationFCImage.stratifiedSample({
-  numPoints: 1000, // Total sample points for validation (30%)
-  classBand: 'landcover',
-  region: westRegion,  // Sample from the east region
-  scale: 10,
-  classValues: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+  classValues: [0,1,2,3,4,5,6,7,8,9],
   classPoints: [100, 100, 100, 100, 100, 100, 100, 100, 100, 100],
   dropNulls: true,
   geometries: true
 });
-print('Validation samples: ', validation_samples);
+// print (StratifiedSampleDataset, 'StratifiedSampleDataset');
+Map.addLayer(StratifiedSampleDataset, {}, 'StratifiedSampleDataset',false);
+// Training/Validation Split 
+var StratifiedSampleDatasetRandom = StratifiedSampleDataset.randomColumn();
+var training_samples = StratifiedSampleDatasetRandom.filter(ee.Filter.lt('random', 0.7));
+var validation_samples = StratifiedSampleDatasetRandom.filter(ee.Filter.gte('random', 0.7));
 Map.addLayer(training_samples, {color: 'red'}, 'training_samples', false);
 Map.addLayer(validation_samples, {color: 'blue'}, 'validation_samples', false);
 //*********************************************************************************************************//
@@ -395,13 +340,13 @@ var second_ImageIDValue = ui.Select({
 });
 // print (second_ImageIDValue);
 Map.add(second_ImageIDValue);
-//************************************************************************
+//******************************************************************************************//
 RunButton2.onClick(function(){
 //**********************************************************************************************************************//
 //*************************************** Section 3 - Image Collection Visualization ***********************************//
 //**********************************************************************************************************************//
 // Visualzation of a single image//
-var listOfimages = monthlyImagesCollection.toList(monthlyImagesCollection.size());
+var listOfimages = s2FilteredCollection.toList(s2FilteredCollection.size());
 // print(listOfimages, 'listOfimages');
 // This snippt is developed to select the two images using the images dates identifed by the user
 var first_Image = ee.Image(listOfimages.get(first_ImageDateID));
@@ -438,7 +383,7 @@ function addText(image){
   return annotated 
 }
 
-var ImageCollectionGif = monthlyImagesCollection.map(addText) //add time stamp to all images
+var ImageCollectionGif = s2FilteredCollection.map(addText) //add time stamp to all images
 // print(ImageCollectionGif.getVideoThumbURL(gifParams)); //print gif
 // var filmArgs = {
 //   dimensions: 128,
@@ -465,7 +410,7 @@ Map.addLayer(prior_imageNDVI, {min: -1, max: 1, palette: NDVI_Palette}, 'First_i
 Map.addLayer(post_imageNDVI, {min: -1, max: 1, palette: NDVI_Palette}, 'Second_imageNDVI',false);
 // Plot NDVI Time series chart for a location of interset 
 var NDVIchart = ui.Chart.image.series({
-  imageCollection: monthlyImagesCollection.select('ndvi'),
+  imageCollection: s2FilteredCollection.select('ndvi'),
   region: P,
   reducer: ee.Reducer.mode(),
   scale:10,
@@ -487,7 +432,7 @@ NDVIbutton.onClick(function(){
 print(NDVIbutton);
 // Plot NDMI Time series chart for a location of interset 
 var NDMIchart = ui.Chart.image.series({
-  imageCollection: monthlyImagesCollection.select('ndmi'),
+  imageCollection: s2FilteredCollection.select('ndmi'),
   region: P,
   reducer: ee.Reducer.mode(),
   scale:10,
@@ -509,7 +454,7 @@ NDMIbutton.onClick(function(){
 // print(NDMIbutton);
 // Plot NDWI Time series chart for a location of interset 
 var NDWIchart = ui.Chart.image.series({
-  imageCollection: monthlyImagesCollection.select('ndwi'),
+  imageCollection: s2FilteredCollection.select('ndwi'),
   region: P,
   reducer: ee.Reducer.mode(),
   scale:10,
@@ -532,15 +477,15 @@ NDWIbutton.onClick(function(){
 //*******************************************************************************************************************************//
 //************ Section 5 - Image Classification - Supervised Classification using Machine Learning Models (i.e. Random Forest)***//
 //*******************************************************************************************************************************//
-// Define the spectral samples polygons  to understand the responses of each of the classes to different image bands moreover, 
-// to understand how different land cover types interact with the enrgey coming from the sun and how features reflect and absorb light
-var spectralSamples = ee.FeatureCollection(
-  trainingSets.map(function(ts, i) {
-    return ts.first().set('class', classArray[i]);
-  })
-);
-Map.addLayer(spectralSamples, {palette: classesPalette},'spectralSamples', false);
-print(spectralSamples, 'spectralSamples');
+// // Define the spectral samples polygons  to understand the responses of each of the classes to different image bands moreover, 
+// // to understand how different land cover types interact with the enrgey coming from the sun and how features reflect and absorb light
+// var spectralSamples = ee.FeatureCollection(
+//   trainingSets.map(function(ts, i) {
+//     return ts.first().set('class', classArray[i]);
+//   })
+// );
+// Map.addLayer(spectralSamples, {palette: classesPalette},'spectralSamples', false);
+// print(spectralSamples, 'spectralSamples');
 // Set the colors for the class series to plot the line charts 
 // for each series and class with the color identified in the classes palette
 var classseries = {};
@@ -550,47 +495,90 @@ for (var i = 0; i < classArray.length; i++) {
     label: classArray[i]       
   };
 }
-// Convert spectralSamples to a list of features with a 'class' property
-var labeledSamples = spectralSamples.map(function(feat, i) {
-  return feat.set('class', classArray[i]);
-});
-var classificationSpectralChart = ui.Chart.image.regions({  image: prior_image,
-  regions: spectralSamples,
-  reducer: ee.Reducer.mean(),
-  scale: 10,
-  seriesProperty: 'class'  // <-- Tells the chart to group by class name
-})
-  .setOptions({
-    title: 'Surface Spectral Reflectance', titleTextStyle: {fontSize:35, italic: false, bold: true},
-    vAxis: {title: 'Reflectance', titleTextStyle: {fontSize:30, italic: false, bold: true}, textStyle: {fontSize: 20, bold: true}},
-    hAxis: {title: 'Image Band', titleTextStyle: {fontSize:30, italic: false, bold: true}, gridlines: {count:20, color: 'black'}, textStyle: {fontSize: 20, bold: true}},
-    interpolateNulls: true,
-    lineWidth: 5,
-    pointSize: 15,
-    series: classseries,
-    // seriesNames: classArray,  // <-- THIS forces legend labels
-});
-var classificationSpectralChartButton = ui.Button('Press to get the Classification Spectral Reflectance Chart for the Identified Classification Features');
-  classificationSpectralChartButton.onClick(function(){
-  print(classificationSpectralChart);
-});
-print (classificationSpectralChartButton);
+// // Convert spectralSamples to a list of features with a 'class' property
+// var labeledSamples = spectralSamples.map(function(feat, i) {
+//   return feat.set('class', classArray[i]);
+// });
+// var classificationSpectralChart = ui.Chart.image.regions({  image: prior_image,
+//   regions: spectralSamples,
+//   reducer: ee.Reducer.mean(),
+//   scale: 10,
+//   seriesProperty: 'class'  // <-- Tells the chart to group by class name
+// })
+//   .setOptions({
+//     title: 'Surface Spectral Reflectance', titleTextStyle: {fontSize:35, italic: false, bold: true},
+//     vAxis: {title: 'Reflectance', titleTextStyle: {fontSize:30, italic: false, bold: true}, textStyle: {fontSize: 20, bold: true}},
+//     hAxis: {title: 'Image Band', titleTextStyle: {fontSize:30, italic: false, bold: true}, gridlines: {count:20, color: 'black'}, textStyle: {fontSize: 20, bold: true}},
+//     interpolateNulls: true,
+//     lineWidth: 5,
+//     pointSize: 15,
+//     series: classseries,
+//     // seriesNames: classArray,  // <-- THIS forces legend labels
+// });
+// var classificationSpectralChartButton = ui.Button('Press to get the Classification Spectral Reflectance Chart for the Identified Classification Features');
+//   classificationSpectralChartButton.onClick(function(){
+//   print(classificationSpectralChart);
+// });
+// print (classificationSpectralChartButton);
 // Set visualization parameters to display the different classes in the classified image min = 0, max = class value of the last class
 var class_vis = {min:classValues[0], max: classValues[classValues.length -1], palette: classesPalette}; 
-// Train the Random Forest classifier using the training samples to classify the image collection
-function RFclassification(i){
-  var classification_training_samples = i.select(bands).sampleRegions({
-    collection:training_samples,
-    properties: ['landcover'],
-    scale: 10
+//***********************************************************************************************************************************************//
+//************       Train the Random Forest classifier using the training samples to classify the image collection            *****************//
+// Define the spectral and index bands to use for classification
+var selectedBands = ['B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B11','B12','ndvi','ndwi'];
+// Add a 'month' band to each image for seasonal context
+var s2WithMonthBand = s2FilteredCollection.map(function(image) {
+  var month = ee.Date(image.get('system:time_start')).get('month').int();
+  return image
+    .select(selectedBands)
+    .addBands(ee.Image.constant(month).rename('month').toInt())
+    .set('month', month)
+    .copyProperties(image, ['system:time_start']);
 });
-var RFtrained_classifier = ee.Classifier.smileRandomForest(10).train(classification_training_samples, 'landcover', bands);
-var RFclassified_image = i.select(bands).classify(RFtrained_classifier)
-.copyProperties(i, ["system:time_start"]);// it adds dates to the classified images
-return RFclassified_image;
+// Final list of bands used for classification (spectral + month)
+var finalBands = selectedBands.concat(['month']);
+// Generate training samples by sampling each image and flattening all into one FeatureCollection
+var monthlyTrainingSamples = s2WithMonthBand.map(function(image) {
+  return image.sampleRegions({
+    collection: training_samples,
+    properties: ['landcover'],
+    scale: 10,
+    tileScale: 16
+  });
+}).flatten();  // Combine all per-image samples
+// // Export the training dataset csv
+// Export.table.toDrive({
+//   collection: monthlyTrainingSamples,
+//   description: 'monthlyTrainingSamples',
+//   fileFormat: 'csv'
+// });
+// Train the Random Forest classifier using the combined training samples
+var trainedClassifier = ee.Classifier.smileRandomForest({
+  numberOfTrees: 100,
+  variablesPerSplit: null,
+  minLeafPopulation: 5,
+  bagFraction: 0.6,
+  maxNodes: null,
+  seed: 0
+}).train({
+  features: monthlyTrainingSamples,
+  classProperty: 'landcover',
+  inputProperties: finalBands
+});
+// print(trainedClassifier,'trainedClassifier');
+// print('Feature importance:', trainedClassifier.explain().get('importance'));
+// Function to classify new Sentinel-2 images using the trained classifier
+function classifyImageWithRF(image) {
+  var month = ee.Date(image.get('system:time_start')).get('month').int();
+  var imageWithMonth = image
+    .select(selectedBands)
+    .addBands(ee.Image.constant(month).rename('month').toInt());
+  return imageWithMonth
+    .classify(trainedClassifier)
+    .copyProperties(image, ['system:time_start']);
 }
-var RFclassified_imageCollection = monthlyImagesCollection.map(RFclassification);
-// print(RFclassified_imageCollection,'RFclassified_imageCollection');
+// Apply classifier to all images in the filtered Sentinel-2 collection
+var RFclassified_imageCollection = s2WithMonthBand.map(classifyImageWithRF);
 var RFclassified_imageCollectionlist = RFclassified_imageCollection.toList(RFclassified_imageCollection.size());
 // print(RFclassified_imageCollectionlist, 'RFclassified_imageCollectionlist');
 // Visualize classified Images // 
@@ -695,6 +683,41 @@ var SecondClassifiedImagefScore = PostRFtestaccuracy.fscore();
 // Print the results
 print('Second Classified Image Confusion Matrix:', PostRFtestaccuracy);
 print('Second Classified Image F-Score:', SecondClassifiedImagefScore);
+// //***************************************************************************************//
+// // Function to compute overall accuracy for a single classified image
+// function computeOverallAccuracy(classifiedImage) {
+//   var validation_test_samples = classifiedImage.sampleRegions({
+//     collection: validation_samples,
+//     properties: ['landcover'],
+//     scale: 10
+//   });
+//   var testAccuracy = validation_test_samples.errorMatrix('landcover', 'classification');
+//   return testAccuracy.accuracy();
+// }
+// // Map over the classified image collection to compute overall accuracies
+// var accuracyList = RFclassified_imageCollection.map(function(image) {
+//   var accuracy = computeOverallAccuracy(image);
+//   return image.set('overall_accuracy', accuracy);
+// });
+// // Extract the overall accuracies and corresponding dates
+// var accuracyValues = accuracyList.aggregate_array('overall_accuracy');
+// var dates = accuracyList.aggregate_array('system:time_start');
+// // Create a chart to plot the overall accuracies over time
+// var OverallAccuracychart = ui.Chart.array.values({
+//   array: accuracyValues,
+//   axis: 0,
+//   xLabels: dates
+// }).setOptions({
+//   title: 'Overall Accuracy Over Time',
+//   hAxis: {title: 'Date'},
+//   vAxis: {title: 'Overall Accuracy'},
+//   legend: {position: 'none'},
+//   lineWidth: 1,
+//   pointSize: 3
+// });
+// // Print the chart
+// print(OverallAccuracychart);
+// //********************************************************
 //*******************************************************************************************************************************//
 //******************************** Section 7 - Detect the Changes between  Classified Images***************************************//
 //*******************************************************************************************************************************//
@@ -863,6 +886,8 @@ changes = ee.ImageCollection(ee.List(
   })
 ).flatten()).reduce(ee.Reducer.sum());
 //*******************************************************************************************************************//
+var numClasses = classValues.length;
+var numChanges = numClasses * numClasses;  // All possible from->to combinations
 var classificationchangepalette = [
   '#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF',
   '#FF8000', '#FF0080', '#8000FF', '#00FF80', '#80FF00', '#0080FF',
@@ -875,8 +900,8 @@ var classificationchangepalette = [
   '#00FA9A', '#00FF7F', '#7CFC00', '#7FFF00', '#1E90FF', '#4169E1',
   '#0000CD', '#00008B', '#191970', '#DC143C', '#FF1493', '#FF69B4',
   '#DB7093', '#C71585'
-];
-Map.addLayer(ee.Image(changes), {min:1, max: 50, palette:classificationchangepalette},'ClassificationChanges',false);
+].slice(0, numChanges);
+Map.addLayer(ee.Image(changes), {min:1, max: numChanges, palette:classificationchangepalette},'Classification Changes',false);
 // print(changes, 'ClassificationChanges');
 //*********************************************************************************************************//
 // Export classification change rasters for areas under specified threat
@@ -1047,7 +1072,7 @@ print(changesPerSitechart);
 // Enable analysis
   analyzeButton.setDisabled(false);
   analyzeButton.onClick(analyzeSelectedChanges); 
-});
+});// This is for the end of Stage 2, i.e. RunButton2
 // ===== ANALYSIS FUNCTION =====
 function analyzeSelectedChanges() {
   if (!changes || !changesPerSite) {
