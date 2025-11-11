@@ -1,10 +1,10 @@
 // To access the EAMENA MLACD JavaScript code copy the following URL (https://code.earthengine.google.com/31dbe0f1047d9b9a455d54e8f450de20), or you can copy the full script below however, this means it will not inlcude the assets for the case study demonstration.
 
-// This script is developed to distingusih the land cover changes in Bani Walid, Libya and detect threats and changes to archaeological sites.
-// This EAMENA Machine Learning ACD script has been developed by EAMENA Research Associate Dr. Ahmed Mahmoud based on the Rayne et al. 2020 Remote Sensing paper
-// (Detecting Change at Archaeological Sites in North Africa Using Open-Source Satellite Imagery) and
-// @Ahmed M A Mahmoud PhD Script for Monitoring Sand Dunes using GEE 
-// In July 2025 some parts of the developed and published MLACD script have been further automated using AI to improve the user experiance 
+// This script is developed to rapidly monitor the changes and threats at and around archaeological sites in Bani Walid region using satellite images.
+// This EAMENA Machine Learning ACD script has been developed by EAMENA Research Associate Dr. Ahmed Mahmoud. 
+// For a comprehensive understanding of the tool, see the full research paper here:
+// Mahmoud, et al. 2024, A Novel Machine Learning Automated Change Detection Tool for Monitoring Disturbances and Threats to Archaeological Sites, https://doi.org/10.1016/j.rsase.2024.101396. 
+// In July 2025 some parts of the developed and published MLACD script have been further automated using AI to improve the user experiance  
 //*****************************************************************************************************************************************************************//
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //****************************************************   Section 1 - Defining Variables & Inputs ******************************************************************//
@@ -28,7 +28,17 @@ var trainingClasses = [
   {TrainingSample: Quarry,     color: '#c7c6c5', label: 'Quarry'},     // class 3
   {TrainingSample: Urban,      color: '#cdc2a8', label: 'Urban'},      // class 4
   {TrainingSample: Vegetation, color: '#118b29', label: 'Vegetation'}, // class 5
-];//Add and define additional training samples (e.g., TS: Water, color: '#2591ff', label: 'Water') or remove any class that is not relevant to your case study
+];//Add and define additional training samples (e.g., TrainingSample: Water, color: '#2591ff', label: 'Water') or remove any class that is not relevant to your case study
+//****************** Export training samples datasets  ********************************************//
+// Loop through and export each class
+trainingClasses.forEach(function(item) {
+  Export.table.toDrive({
+    collection: item.TrainingSample,
+    description: item.label + '_TrainingSample',
+    fileNamePrefix: item.label + '_TrainingSample',
+    fileFormat: 'SHP'
+  });
+});
 //***********************************************************************************************************************************************************************//
 //******************************************************************************************************************************//
 //***********************************   Section 2 - Adding Image collections and Feature collections ***************************//
@@ -278,28 +288,44 @@ var Sites_buffer_polygons = empty.paint({
 Map.addLayer(Sites_buffer_polygons, {palette: 'FF0000'}, 'Sites buffer',false);
 Map.addLayer(Sites, {color: 'blue'}, 'Sites',false);
 //************************************************************************************************************************//
-// Merge the training samples into one feature collection
+// Merge the training polygons into one FeatureCollection
 var sampleDatasetFC = ee.FeatureCollection(trainingSets).flatten();
-// print('sampleDatasetFC', sampleDatasetFC);
-// Convert the training samples feature collection into an image 
-var sampleDatasetFCImage = ee.Image().byte().paint(sampleDatasetFC, 'landcover').rename('landcover');
-// Collect 100 training samples for each class using the stratified sample function 
-var StratifiedSampleDataset = sampleDatasetFCImage.stratifiedSample({
-  numPoints: 1500,
+// Add a random number to each polygon
+var polygonsWithRand = sampleDatasetFC.randomColumn('rand', 42);
+// Split polygons into training (70%) and validation (30%) sets
+var polygonTrain = polygonsWithRand.filter(ee.Filter.lt('rand', 0.7));
+var polygonVal = polygonsWithRand.filter(ee.Filter.gte('rand', 0.7));
+// visualize polygon split
+// Map.addLayer(polygonTrain, {color:'green'}, 'Training Polygons', false);
+// Map.addLayer(polygonVal, {color:'orange'}, 'Validation Polygons', false);
+// ************************************ STRATIFIED SAMPLING FROM POLYGONS ************************************ //
+// Convert polygon sets into raster masks
+var polygonTrainImg = ee.Image().byte().paint(polygonTrain, 'landcover').rename('landcover');
+var polygonValImg = ee.Image().byte().paint(polygonVal, 'landcover').rename('landcover');
+// Collect stratified samples from training polygons
+var training_samples = polygonTrainImg.stratifiedSample({
+  numPoints: 3000,           // total points across all classes
+  classBand: 'landcover',
+  region: Study_Area,
+  scale: 10,
+  classValues: [0,1,2,3,4,5,6,7,8,9], 
+  classPoints: [300,300,300,300,300,300,300,300,300,300],
+  dropNulls: true,
+  geometries: true,
+  seed: 11
+});
+// Collect stratified samples from validation polygons
+var validation_samples = polygonValImg.stratifiedSample({
+  numPoints: 1000,
   classBand: 'landcover',
   region: Study_Area,
   scale: 10,
   classValues: [0,1,2,3,4,5,6,7,8,9],
-  classPoints: [200, 200, 200, 200, 200, 200, 200, 200, 200, 200],
+  classPoints: [100,100,100,100,100,100,100,100,100,100],
   dropNulls: true,
-  geometries: true
+  geometries: true,
+  seed: 22
 });
-// print (StratifiedSampleDataset, 'StratifiedSampleDataset');
-Map.addLayer(StratifiedSampleDataset, {}, 'Stratified Sample Dataset',false);
-// Training/Validation Split 
-var StratifiedSampleDatasetRandom = StratifiedSampleDataset.randomColumn();
-var training_samples = StratifiedSampleDatasetRandom.filter(ee.Filter.lt('random', 0.7));
-var validation_samples = StratifiedSampleDatasetRandom.filter(ee.Filter.gte('random', 0.7));
 Map.addLayer(training_samples, {color: 'red'}, 'Training Samples', false);
 Map.addLayer(validation_samples, {color: 'blue'}, 'Validation Samples', false);
 //*********************************************************************************************************//
@@ -541,12 +567,12 @@ var monthlyTrainingSamples = monthlytrainingCollection.map(function(image) {
     tileScale: 16
   });
 }).flatten();  // Combine all per-image samples
-// // Export the training dataset csv
-// Export.table.toDrive({
-//   collection: monthlyTrainingSamples,
-//   description: 'monthlyTrainingSamples',
-//   fileFormat: 'csv'
-// });
+// Export the training dataset csv
+Export.table.toDrive({
+  collection: monthlyTrainingSamples,
+  description: 'Classifier Training Dataset',
+  fileFormat: 'csv'
+});
 // Train the Random Forest classifier using the combined training samples
 var trainedClassifier = ee.Classifier.smileRandomForest({
   numberOfTrees: 100,
@@ -649,35 +675,65 @@ for(var a = 0; a < aMax ; a++){
 Map.add(legendPanel);
 //************************************************************************************************************//
 //************************** Section 6 - Validation of Classification Results ********************************//
-// Validation for the prior classified image
-var PriorRFvalidation_test_samples = prior_classifiedImage.sampleRegions({collection: validation_samples,  properties: ['landcover'],  scale: 10});
-// print('Prior RF valdiation dataset', PriorRFvalidation_test_samples);
-var PriorRFtestaccuracy = PriorRFvalidation_test_samples.errorMatrix('landcover','classification');
-print('First Classified Image Validation Overall Accuracy:', PriorRFtestaccuracy.accuracy());
-var PriorProducerAccuracy = PriorRFtestaccuracy.producersAccuracy();
-print('First Classified Image Producer Accuracy:',PriorProducerAccuracy);
-var PriorConsumerAccuracy = PriorRFtestaccuracy.consumersAccuracy();
-// var PriorConsumerAccuracy = ee.Array(PriorConsumerAccuracy.values());
-print('First Classified Image Consumer Accuracy:', PriorConsumerAccuracy);
-// // Calculate precision, recall, and F-score
-var FirstClassifiedImagefScore = PriorRFtestaccuracy.fscore();
-// Print the results
-print('First Classified Image Confusion Matrix:', PriorRFtestaccuracy);
-print('First Classified Image F-Score:', FirstClassifiedImagefScore);
-// Validation for the post classified image
-var PostRFvalidation_test_samples = post_classifiedImage.sampleRegions({collection: validation_samples,  properties: ['landcover'],  scale: 10});
-var PostRFtestaccuracy = PostRFvalidation_test_samples.errorMatrix('landcover','classification');
-print('Second Classified Image Validation Overall Accuracy:', PostRFtestaccuracy.accuracy());
-var PostProducerAccuracy = PostRFtestaccuracy.producersAccuracy();
-print('Second Classified Image Producer Accuracy:',PostProducerAccuracy);
-var PostConsumerAccuracy = PostRFtestaccuracy.consumersAccuracy();
-// var PostConsumerAccuracy = ee.Array(PostConsumerAccuracy.values());
-print('Second Classified Image Consumer Accuracy:', PostConsumerAccuracy);
-// // Calculate precision, recall, and F-score
-var SecondClassifiedImagefScore = PostRFtestaccuracy.fscore();
-// Print the results
-print('Second Classified Image Confusion Matrix:', PostRFtestaccuracy);
-print('Second Classified Image F-Score:', SecondClassifiedImagefScore);
+//************************************   Classifier Accuracy Assessment   ************************************//
+// Sample validation points from training image collection
+var validationSamples = monthlytrainingCollection.map(function(image) {
+  return image.sampleRegions({
+    collection: validation_samples,  // validation FeatureCollection
+    properties: ['landcover'],
+    scale: 10,
+    tileScale: 16
+  });
+}).flatten();
+// Classify validation samples using trained model
+var validated = validationSamples.classify(trainedClassifier);
+// Classifier Confusion Matrix
+var confusionMatrix = validated.errorMatrix('landcover', 'classification');
+print('Classifier Confusion Matrix:', confusionMatrix);
+// Classifier Accuracy metrics
+print('Classifier Overall Accuracy:', confusionMatrix.accuracy());
+print('Classifier Kappa Coefficient:', confusionMatrix.kappa());
+print('Classifier Producer\'s Accuracy:', confusionMatrix.producersAccuracy());
+print('Classifier User\'s Accuracy:', confusionMatrix.consumersAccuracy());
+// F-score (per class)
+var fscore = confusionMatrix.fscore();
+print('Classifier F-score per class:', fscore);
+// Export Classifier Validation results for external analysis
+Export.table.toDrive({
+  collection: validated,
+  description: 'ValidationResults_RF',
+  fileFormat: 'CSV'
+});
+//////////////////////////////////////////////////////////////////////////////////////////////////
+// // Validation for the prior classified image (change validation_samples with samples collected in the field or from high-res image of the same date)
+// var PriorRFvalidation_test_samples = prior_classifiedImage.sampleRegions({collection: validation_samples,  properties: ['landcover'],  scale: 10});
+// // print('Prior RF valdiation dataset', PriorRFvalidation_test_samples);
+// var PriorRFtestaccuracy = PriorRFvalidation_test_samples.errorMatrix('landcover','classification');
+// print('First Classified Image Validation Overall Accuracy:', PriorRFtestaccuracy.accuracy());
+// var PriorProducerAccuracy = PriorRFtestaccuracy.producersAccuracy();
+// print('First Classified Image Producer Accuracy:',PriorProducerAccuracy);
+// var PriorConsumerAccuracy = PriorRFtestaccuracy.consumersAccuracy();
+// // var PriorConsumerAccuracy = ee.Array(PriorConsumerAccuracy.values());
+// print('First Classified Image Consumer Accuracy:', PriorConsumerAccuracy);
+// // // Calculate precision, recall, and F-score
+// var FirstClassifiedImagefScore = PriorRFtestaccuracy.fscore();
+// // Print the results
+// print('First Classified Image Confusion Matrix:', PriorRFtestaccuracy);
+// print('First Classified Image F-Score:', FirstClassifiedImagefScore);
+// // Validation for the post classified image
+// var PostRFvalidation_test_samples = post_classifiedImage.sampleRegions({collection: validation_samples,  properties: ['landcover'],  scale: 10});
+// var PostRFtestaccuracy = PostRFvalidation_test_samples.errorMatrix('landcover','classification');
+// print('Second Classified Image Validation Overall Accuracy:', PostRFtestaccuracy.accuracy());
+// var PostProducerAccuracy = PostRFtestaccuracy.producersAccuracy();
+// print('Second Classified Image Producer Accuracy:',PostProducerAccuracy);
+// var PostConsumerAccuracy = PostRFtestaccuracy.consumersAccuracy();
+// // var PostConsumerAccuracy = ee.Array(PostConsumerAccuracy.values());
+// print('Second Classified Image Consumer Accuracy:', PostConsumerAccuracy);
+// // // Calculate precision, recall, and F-score
+// var SecondClassifiedImagefScore = PostRFtestaccuracy.fscore();
+// // Print the results
+// print('Second Classified Image Confusion Matrix:', PostRFtestaccuracy);
+// print('Second Classified Image F-Score:', SecondClassifiedImagefScore);
 // //***************************************************************************************//
 // // Function to compute overall accuracy for a single classified image
 // function computeOverallAccuracy(classifiedImage) {
