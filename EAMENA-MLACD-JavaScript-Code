@@ -1461,9 +1461,9 @@ var second_ImageIDlabel = ui.Label({value:'*from the drop down menu select the S
     style:{fontSize: 30, fontWeight: 'bold'}});
 var SecondRunButtonLabel =  ui.Label({value:'6-Press the second "Run" button to excecute the second stage of the processing.',
     style:{fontSize: 30, fontWeight: 'bold'}});
-var ResetButtonLabel = ui.Label({value:'*Optional-Press the "Rest" button to redefine your inputs.',
+var ResetButtonLabel = ui.Label({value:'*Optional-Press the "Reset" button to redefine your inputs.',
     style:{fontSize: 30, fontWeight: 'bold'}});
-var ResetUserPointsLabel = ui.Label({value:'*Optional-Press the "Rest User Points" button to reset the number of the identified point locations.',
+var ResetUserPointsLabel = ui.Label({value:'*Optional-Press the "Reset User Points" button to reset the number of the identified point locations.',
     style:{fontSize: 30, fontWeight: 'bold'}});
 // Reset the map panel to allow for new diplay for the new results
 ResetButton.onClick(function() {
